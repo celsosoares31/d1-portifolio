@@ -1,0 +1,27 @@
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "d1-portifolio",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-03-03",
+    "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "my_portifolio",
+          "database_id": "3a4268aa-3c9f-4c53-a81e-19ff96a1dd3d"
+        }
+    ],
+    "secrets_store_secrets": [
+        {
+            "store_id": "c9ce12667b6348ddbe5563ca9a637ec8",
+            "binding": "SECRET",
+            "secret_name": "password"
+        }
+    ],
+	"observability": {
+		"enabled": true
+	}
+}
