@@ -1,10 +1,12 @@
-import { Hono, Context, Next } from "hono";
-import { cors } from "hono/cors";
+import { Hono, Context, Next } from 'hono';
+import { cors } from 'hono/cors';
 import { handleRest } from './rest';
+import { compare } from 'bcrypt';
+import { User } from './types';
 
 export interface Env {
-    DB: D1Database;
-    SECRET: SecretsStoreSecret;
+  DB: D1Database;
+  SECRET: SecretsStoreSecret;
 }
 
 // # List all users
@@ -28,61 +30,94 @@ export interface Env {
 // DELETE /rest/users/123
 
 export default {
-    async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-        const app = new Hono<{ Bindings: Env }>();
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const app = new Hono<{ Bindings: Env }>();
 
-        // Apply CORS to all routes
-        app.use('*', async (c, next) => {
-            return cors()(c, next);
-        })
+    // Apply CORS to all routes
+    app.use('*', async (c, next) => {
+      return cors()(c, next);
+    });
 
-        // Secret Store key value that we have set
-        const secret = await env.SECRET.get();
+    // Secret Store key value that we have set
+    const secret = await env.SECRET.get();
 
-        // Authentication middleware that verifies the Authorization header
-        // is sent in on each request and matches the value of our Secret key.
-        // If a match is not found we return a 401 and prevent further access.
-        const authMiddleware = async (c: Context, next: Next) => {
-            const authHeader = c.req.header('Authorization');
-            if (!authHeader) {
-                return c.json({ error: 'Unauthorized' }, 401);
-            }
+    // Authentication middleware that verifies the Authorization header
+    // is sent in on each request and matches the value of our Secret key.
+    // If a match is not found we return a 401 and prevent further access.
+    const authMiddleware = async (c: Context, next: Next) => {
+      const authHeader = c.req.header('Authorization');
+      if (!authHeader) {
+        return c.json({ error: 'Unauthorized' }, 401);
+      }
 
-            const token = authHeader.startsWith('Bearer ')
-                ? authHeader.substring(7)
-                : authHeader;
+      const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : authHeader;
 
-            if (token !== secret) {
-                return c.json({ error: 'Unauthorized' }, 401);
-            }
+      if (token !== secret) {
+        return c.json({ error: 'Unauthorized' }, 401);
+      }
 
-            return next();
-        };
+      return next();
+    };
+    // LOGIN ROUTE (no auth middleware)
+    app.post('/rest/auth/login', async (c) => {
+      try {
+        const { email, password } = await c.req.json();
 
-        // CRUD REST endpoints made available to all of our tables
-        app.all('/rest/*', authMiddleware, handleRest);
+        if (!email || !password) {
+          return c.json({ error: 'Email and password required' }, 400);
+        }
 
-        // Execute a raw SQL statement with parameters with this route
-        app.post('/query', authMiddleware, async (c) => {
-            try {
-                const body = await c.req.json();
-                const { query, params } = body;
+        const user: User | null = await env.DB.prepare(`SELECT id, email, password_hash FROM users WHERE email = ?`).bind(email).first();
 
-                if (!query) {
-                    return c.json({ error: 'Query is required' }, 400);
-                }
+        if (!user) {
+          return c.json({ error: 'Invalid credentials' }, 401);
+        }
 
-                // Execute the query against D1 database
-                const results = await env.DB.prepare(query)
-                    .bind(...(params || []))
-                    .all();
+        const passwordValid = await compare(password, user.password_hash);
 
-                return c.json(results);
-            } catch (error: any) {
-                return c.json({ error: error.message }, 500);
-            }
+        if (!passwordValid) {
+          return c.json({ error: 'Invalid credentials' }, 401);
+        }
+
+        // Reuse your Secret Store token so it works with authMiddleware
+        const token = await env.SECRET.get();
+
+        return c.json({
+          token,
+          user: {
+            id: user.rowid,
+            email: user.email,
+          },
         });
+      } catch (err: any) {
+        return c.json({ error: err.message }, 500);
+      }
+    });
 
-        return app.fetch(request, env, ctx);
-    }
+    // CRUD REST endpoints made available to all of our tables
+    app.all('/rest/*', authMiddleware, handleRest);
+
+    // Execute a raw SQL statement with parameters with this route
+    app.post('/query', authMiddleware, async (c) => {
+      try {
+        const body = await c.req.json();
+        const { query, params } = body;
+
+        if (!query) {
+          return c.json({ error: 'Query is required' }, 400);
+        }
+
+        // Execute the query against D1 database
+        const results = await env.DB.prepare(query)
+          .bind(...(params || []))
+          .all();
+
+        return c.json(results);
+      } catch (error: any) {
+        return c.json({ error: error.message }, 500);
+      }
+    });
+
+    return app.fetch(request, env, ctx);
+  },
 } satisfies ExportedHandler<Env>;
