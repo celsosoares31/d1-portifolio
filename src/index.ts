@@ -1,7 +1,7 @@
 import { Hono, Context, Next } from 'hono';
 import { cors } from 'hono/cors';
 import { handleRest } from './rest';
-import { compare } from 'bcrypt';
+import { compare, hash } from 'bcryptjs';
 import { User } from './types';
 
 export interface Env {
