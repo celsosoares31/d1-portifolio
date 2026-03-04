@@ -4,6 +4,9 @@ import { handleRest } from './rest';
 import { compare, hash } from 'bcryptjs';
 import { User } from './types';
 
+import { getConnInfo } from 'hono/cloudflare-workers';
+import { validateTurnstile } from './validateTurnstile';
+
 export interface Env {
   DB: D1Database;
   SECRET: SecretsStoreSecret;
@@ -32,6 +35,7 @@ export interface Env {
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const app = new Hono<{ Bindings: Env }>();
+    const userIp = request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || '';
 
     // Apply CORS to all routes
     app.use('*', async (c, next) => {
@@ -61,7 +65,13 @@ export default {
     // LOGIN ROUTE (no auth middleware)
     app.post('/rest/auth/login', async (c) => {
       try {
-        const { email, password } = await c.req.json();
+        const { email, password, captchaToken } = await c.req.json();
+
+        const validateCaptcha = await validateTurnstile(captchaToken, userIp);
+
+        if (!validateCaptcha.success) {
+          return c.json({ error: 'Invalid captcha' }, 400);
+        }
 
         if (!email || !password) {
           return c.json({ error: 'Email and password required' }, 400);
